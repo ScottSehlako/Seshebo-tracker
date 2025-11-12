@@ -1,47 +1,147 @@
 import 'package:flutter/material.dart';
+import '../db/db_helper.dart';
 import '../theme/app_theme.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Dashboard')),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: GridView.count(
-          crossAxisCount: 2,
-          mainAxisSpacing: 16,
-          crossAxisSpacing: 16,
-          children: [
-            _buildCard('Today\'s Deliveries', Icons.local_shipping, '3'),
-            _buildCard('Unpaid Orders', Icons.money_off, '2'),
-            _buildCard('Low Stock', Icons.warning_amber, '1'),
-            _buildCard('Weekly Sales', Icons.bar_chart, 'R1,250'),
-          ],
-        ),
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  final DBHelper _dbHelper = DBHelper();
+
+  int _todayDeliveries = 0;
+  int _unpaidOrders = 0;
+  int _lowStock = 0;
+  double _weeklySales = 0.0;
+  List<String> _notifications = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDashboardData();
+  }
+
+  Future<void> _loadDashboardData() async {
+    final db = await _dbHelper.database;
+
+    // Today’s Deliveries: count orders dated today
+    final today = DateTime.now().toIso8601String().split("T").first;
+    final deliveries = await db.query('orders', where: "date LIKE ?", whereArgs: ["$today%"]);
+
+    // Unpaid orders (if you later add payment status)
+    final unpaid = await db.query('orders', where: "price <= 0");
+
+    // Low stock detection
+    final stock = await db.query('stock');
+    final lowStockItems = stock.where((s) => (s['quantity_remaining'] as int) <= 5).toList();
+
+    // Weekly sales (approximate)
+    final weekAgo = DateTime.now().subtract(const Duration(days: 7)).toIso8601String();
+    final weekSales = await db.query(
+      'orders',
+      where: 'date >= ?',
+      whereArgs: [weekAgo],
+    );
+    final totalSales = weekSales.fold<double>(
+      0.0,
+      (sum, order) => sum + (order['total'] as double),
+    );
+
+    setState(() {
+      _todayDeliveries = deliveries.length;
+      _unpaidOrders = unpaid.length;
+      _lowStock = lowStockItems.length;
+      _weeklySales = totalSales;
+
+      _notifications = [];
+      if (_lowStock > 0) _notifications.add('$_lowStock item(s) are low on stock.');
+      if (_unpaidOrders > 0) _notifications.add('$_unpaidOrders unpaid order(s).');
+      if (_todayDeliveries == 0) _notifications.add('No deliveries scheduled today.');
+    });
+  }
+
+  void _showNotifications() {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Notifications'),
+        content: _notifications.isEmpty
+            ? const Text('No new notifications.')
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: _notifications.map((n) => Text('• $n')).toList(),
+              ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          )
+        ],
       ),
     );
   }
 
-  Widget _buildCard(String title, IconData icon, String value) {
+  Widget _buildCard(String title, IconData icon, String value, Color color) {
     return Card(
       color: AppTheme.lightGrey,
       elevation: 2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: InkWell(
-        onTap: () {},
+        onTap: _loadDashboardData,
         borderRadius: BorderRadius.circular(12),
         child: Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, color: AppTheme.primaryBlue, size: 36),
+              Icon(icon, color: color, size: 36),
               const SizedBox(height: 8),
-              Text(value, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              Text(value,
+                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
               const SizedBox(height: 4),
               Text(title, style: TextStyle(color: AppTheme.darkGrey)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.grey[100],
+      appBar: AppBar(
+        title: const Text('Dashboard'),
+        backgroundColor: AppTheme.primaryBlue,
+        foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.notifications),
+            onPressed: _showNotifications,
+          ),
+        ],
+      ),
+      body: RefreshIndicator(
+        onRefresh: _loadDashboardData,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: GridView.count(
+            crossAxisCount: 2,
+            mainAxisSpacing: 16,
+            crossAxisSpacing: 16,
+            children: [
+              _buildCard("Today's Deliveries", Icons.local_shipping,
+                  '$_todayDeliveries', AppTheme.primaryBlue),
+              _buildCard('Unpaid Orders', Icons.money_off,
+                  '$_unpaidOrders', Colors.redAccent),
+              _buildCard('Low Stock', Icons.warning_amber,
+                  '$_lowStock', Colors.orangeAccent),
+              _buildCard('Weekly Sales', Icons.bar_chart,
+                  'R${_weeklySales.toStringAsFixed(2)}', Colors.green),
             ],
           ),
         ),

@@ -1,16 +1,216 @@
 import 'package:flutter/material.dart';
+import '../db/db_helper.dart';
+import '../models/stock.dart';
 
-class StockScreen extends StatelessWidget {
+class StockScreen extends StatefulWidget {
   const StockScreen({super.key});
+
+  @override
+  State<StockScreen> createState() => _StockScreenState();
+}
+
+class _StockScreenState extends State<StockScreen> {
+  final DBHelper _dbHelper = DBHelper();
+  List<StockModel> _stockList = [];
+  List<StockModel> _filteredStock = [];
+  final TextEditingController _searchController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadStock();
+    _searchController.addListener(_filterStock);
+  }
+
+  Future<void> _loadStock() async {
+    final db = await _dbHelper.database;
+    final result = await db.query('stock', orderBy: 'type ASC');
+    setState(() {
+      _stockList = result.map((e) => StockModel.fromMap(e)).toList();
+      _filteredStock = _stockList;
+    });
+  }
+
+  void _filterStock() {
+    final query = _searchController.text.toLowerCase();
+    setState(() {
+      _filteredStock = _stockList
+          .where((item) => item.type.toLowerCase().contains(query))
+          .toList();
+    });
+  }
+
+  Future<void> _addOrEditStock({StockModel? stock}) async {
+    final typeController = TextEditingController(text: stock?.type ?? '');
+    final qtyTotalController =
+        TextEditingController(text: stock?.quantityTotal.toString() ?? '');
+    final qtyRemainController =
+        TextEditingController(text: stock?.quantityRemaining.toString() ?? '');
+    final priceController =
+        TextEditingController(text: stock?.pricePerUnit.toString() ?? '');
+
+    final isEditing = stock != null;
+
+    await showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text(isEditing ? 'Edit Stock' : 'Add Stock'),
+        content: SingleChildScrollView(
+          child: Column(
+            children: [
+              TextField(
+                controller: typeController,
+                decoration: const InputDecoration(labelText: 'Type'),
+              ),
+              TextField(
+                controller: qtyTotalController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Total Quantity'),
+              ),
+              TextField(
+                controller: qtyRemainController,
+                keyboardType: TextInputType.number,
+                decoration:
+                    const InputDecoration(labelText: 'Remaining Quantity'),
+              ),
+              TextField(
+                controller: priceController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Price per Unit'),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
+            onPressed: () async {
+              final type = typeController.text.trim();
+              final total = int.tryParse(qtyTotalController.text) ?? 0;
+              final remain = int.tryParse(qtyRemainController.text) ?? 0;
+              final price = double.tryParse(priceController.text) ?? 0.0;
+
+              final newStock = StockModel(
+                id: stock?.id,
+                type: type,
+                quantityTotal: total,
+                quantityRemaining: remain,
+                pricePerUnit: price,
+              );
+
+              if (isEditing) {
+                await _dbHelper.update('stock', newStock.toMap(), 'id = ?', [stock!.id]);
+              } else {
+                await _dbHelper.insert('stock', newStock.toMap());
+              }
+
+              Navigator.pop(context);
+              _loadStock();
+            },
+            child: const Text('Save', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _deleteStock(int id) async {
+    await _dbHelper.delete('stock', 'id = ?', [id]);
+    _loadStock();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Stock')),
-      body: const Center(child: Text('Stock management will appear here')),
+      backgroundColor: Colors.grey[100],
+      appBar: AppBar(
+        title: const Text('Stock Management'),
+        backgroundColor: Colors.blue,
+        foregroundColor: Colors.white,
+      ),
+      body: Column(
+        children: [
+          // Search bar
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: TextField(
+              controller: _searchController,
+              decoration: InputDecoration(
+                hintText: 'Search stock type...',
+                prefixIcon: const Icon(Icons.search),
+                filled: true,
+                fillColor: Colors.white,
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+            ),
+          ),
+
+          Expanded(
+            child: _filteredStock.isEmpty
+                ? const Center(child: Text('No stock available'))
+                : ListView.builder(
+                    itemCount: _filteredStock.length,
+                    itemBuilder: (context, index) {
+                      final stock = _filteredStock[index];
+                      final isLowStock = stock.quantityRemaining <= 5;
+
+                      return Card(
+                        margin:
+                            const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                        color: Colors.white,
+                        elevation: 3,
+                        child: ListTile(
+                          title: Text(stock.type,
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.bold, fontSize: 16)),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Total: ${stock.quantityTotal}'),
+                              Text('Remaining: ${stock.quantityRemaining}',
+                                  style: TextStyle(
+                                    color: isLowStock
+                                        ? Colors.redAccent
+                                        : Colors.black87,
+                                  )),
+                              Text('Price per Unit: R${stock.pricePerUnit}'),
+                            ],
+                          ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.edit, color: Colors.blue),
+                                onPressed: () =>
+                                    _addOrEditStock(stock: stock),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.delete, color: Colors.red),
+                                onPressed: () =>
+                                    _deleteStock(stock.id!),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
       floatingActionButton: FloatingActionButton(
-        onPressed: () {},
-        child: const Icon(Icons.add),
+        onPressed: () => _addOrEditStock(),
+        backgroundColor: Colors.blue,
+        child: const Icon(Icons.add, color: Colors.white),
       ),
     );
   }
