@@ -11,91 +11,95 @@ class StockScreen extends StatefulWidget {
 
 class _StockScreenState extends State<StockScreen> {
   final DBHelper _dbHelper = DBHelper();
-  List<StockModel> _stockList = [];
-  List<StockModel> _filteredStock = [];
   final TextEditingController _searchController = TextEditingController();
+
+  List<StockModel> _allStock = [];
+  List<StockModel> _visibleStock = [];
+  String _filterType = 'All';
 
   @override
   void initState() {
     super.initState();
-    _loadStock();
-    _searchController.addListener(_filterStock);
+    _fetchStock();
+    _searchController.addListener(_applyFilters);
   }
 
-  Future<void> _loadStock() async {
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  /// Fetch all stock items from DB
+  Future<void> _fetchStock() async {
     final db = await _dbHelper.database;
-    final result = await db.query('stock', orderBy: 'type ASC');
+    final result = await db.query('stock', orderBy: 'meat_type ASC');
+
     setState(() {
-      _stockList = result.map((e) => StockModel.fromMap(e)).toList();
-      _filteredStock = _stockList;
+      _allStock = result.map((e) => StockModel.fromMap(e)).toList();
+      _applyFilters();
     });
   }
 
-  void _filterStock() {
-    final query = _searchController.text.toLowerCase();
+  /// Apply search and filter conditions
+  void _applyFilters() {
+    final query = _searchController.text.trim().toLowerCase();
+
     setState(() {
-      _filteredStock = _stockList
-          .where((item) => item.type.toLowerCase().contains(query))
-          .toList();
+      _visibleStock = _allStock.where((item) {
+        final matchesSearch = item.type.toLowerCase().contains(query);
+        final isLow = item.quantityRemaining <= 5;
+
+        if (_filterType == 'Low Stock') {
+          return matchesSearch && isLow;
+        }
+        return matchesSearch;
+      }).toList();
     });
   }
 
-  Future<void> _addOrEditStock({StockModel? stock}) async {
-    final typeController = TextEditingController(text: stock?.type ?? '');
-    final qtyTotalController =
-        TextEditingController(text: stock?.quantityTotal.toString() ?? '');
-    final qtyRemainController =
-        TextEditingController(text: stock?.quantityRemaining.toString() ?? '');
-    final priceController =
-        TextEditingController(text: stock?.pricePerUnit.toString() ?? '');
+  /// Show dialog for add/edit stock
+  Future<void> _showStockDialog({StockModel? existing}) async {
+    final isEditing = existing != null;
 
-    final isEditing = stock != null;
+    final typeCtrl = TextEditingController(text: existing?.type ?? '');
+    final totalCtrl =
+        TextEditingController(text: existing?.quantityTotal.toString() ?? '');
+    final remainCtrl = TextEditingController(
+        text: existing?.quantityRemaining.toString() ?? '');
+    final priceCtrl =
+        TextEditingController(text: existing?.pricePerUnit.toString() ?? '');
 
     await showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        title: Text(isEditing ? 'Edit Stock' : 'Add Stock'),
+        title: Text(isEditing ? 'Edit Stock Item' : 'Add Stock Item'),
         content: SingleChildScrollView(
           child: Column(
             children: [
-              TextField(
-                controller: typeController,
-                decoration: const InputDecoration(labelText: 'Type'),
-              ),
-              TextField(
-                controller: qtyTotalController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Total Quantity'),
-              ),
-              TextField(
-                controller: qtyRemainController,
-                keyboardType: TextInputType.number,
-                decoration:
-                    const InputDecoration(labelText: 'Remaining Quantity'),
-              ),
-              TextField(
-                controller: priceController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Price per Unit'),
-              ),
+              _buildTextField('Type', typeCtrl),
+              _buildTextField('Total Quantity', totalCtrl, isNumber: true),
+              _buildTextField('Remaining Quantity', remainCtrl, isNumber: true),
+              _buildTextField('Price per Unit (R)', priceCtrl, isNumber: true),
             ],
           ),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel')),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
             onPressed: () async {
-              final type = typeController.text.trim();
-              final total = int.tryParse(qtyTotalController.text) ?? 0;
-              final remain = int.tryParse(qtyRemainController.text) ?? 0;
-              final price = double.tryParse(priceController.text) ?? 0.0;
+              final type = typeCtrl.text.trim();
+              if (type.isEmpty) return;
 
-              final newStock = StockModel(
-                id: stock?.id,
+              final total = int.tryParse(totalCtrl.text) ?? 0;
+              final remain = int.tryParse(remainCtrl.text) ?? 0;
+              final price = double.tryParse(priceCtrl.text) ?? 0.0;
+
+              final stock = StockModel(
+                id: existing?.id,
                 type: type,
                 quantityTotal: total,
                 quantityRemaining: remain,
@@ -103,13 +107,13 @@ class _StockScreenState extends State<StockScreen> {
               );
 
               if (isEditing) {
-                await _dbHelper.update('stock', newStock.toMap(), 'id = ?', [stock!.id]);
+                await _dbHelper.update('stock', stock.toMap(), 'id = ?', [existing!.id]);
               } else {
-                await _dbHelper.insert('stock', newStock.toMap());
+                await _dbHelper.insert('stock', stock.toMap());
               }
 
-              Navigator.pop(context);
-              _loadStock();
+              if (context.mounted) Navigator.pop(context);
+              await _fetchStock();
             },
             child: const Text('Save', style: TextStyle(color: Colors.white)),
           ),
@@ -118,9 +122,119 @@ class _StockScreenState extends State<StockScreen> {
     );
   }
 
+  /// Delete a stock item
   Future<void> _deleteStock(int id) async {
-    await _dbHelper.delete('stock', 'id = ?', [id]);
-    _loadStock();
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Confirm Delete'),
+        content: const Text('Are you sure you want to delete this item?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Delete')),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      await _dbHelper.delete('stock', 'id = ?', [id]);
+      await _fetchStock();
+    }
+  }
+
+  Widget _buildTextField(String label, TextEditingController controller,
+      {bool isNumber = false}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: TextField(
+        controller: controller,
+        keyboardType: isNumber ? TextInputType.number : TextInputType.text,
+        decoration: InputDecoration(
+          labelText: label,
+          border: const OutlineInputBorder(),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSearchAndFilterBar() {
+    return Container(
+      color: Colors.grey[200],
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _searchController,
+              decoration: InputDecoration(
+                hintText: 'Search stock...',
+                prefixIcon: const Icon(Icons.search),
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide.none),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          DropdownButton<String>(
+            value: _filterType,
+            underline: const SizedBox(),
+            items: const [
+              DropdownMenuItem(value: 'All', child: Text('All')),
+              DropdownMenuItem(value: 'Low Stock', child: Text('Low Stock')),
+            ],
+            onChanged: (val) {
+              setState(() {
+                _filterType = val!;
+                _applyFilters();
+              });
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStockCard(StockModel stock) {
+    final isLow = stock.quantityRemaining <= 5;
+
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      elevation: 2,
+      child: ListTile(
+        title: Text(
+          stock.type,
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Total: ${stock.quantityTotal}'),
+            Text(
+              'Remaining: ${stock.quantityRemaining}',
+              style: TextStyle(color: isLow ? Colors.red : Colors.black),
+            ),
+            Text('Price per Unit: R${stock.pricePerUnit.toStringAsFixed(2)}'),
+          ],
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+                icon: const Icon(Icons.edit, color: Colors.blue),
+                onPressed: () => _showStockDialog(existing: stock)),
+            IconButton(
+                icon: const Icon(Icons.delete, color: Colors.red),
+                onPressed: () => _deleteStock(stock.id!)),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -134,82 +248,20 @@ class _StockScreenState extends State<StockScreen> {
       ),
       body: Column(
         children: [
-          // Search bar
-          Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: TextField(
-              controller: _searchController,
-              decoration: InputDecoration(
-                hintText: 'Search stock type...',
-                prefixIcon: const Icon(Icons.search),
-                filled: true,
-                fillColor: Colors.white,
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
-                ),
-              ),
-            ),
-          ),
-
+          _buildSearchAndFilterBar(),
           Expanded(
-            child: _filteredStock.isEmpty
+            child: _visibleStock.isEmpty
                 ? const Center(child: Text('No stock available'))
                 : ListView.builder(
-                    itemCount: _filteredStock.length,
-                    itemBuilder: (context, index) {
-                      final stock = _filteredStock[index];
-                      final isLowStock = stock.quantityRemaining <= 5;
-
-                      return Card(
-                        margin:
-                            const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                        color: Colors.white,
-                        elevation: 3,
-                        child: ListTile(
-                          title: Text(stock.type,
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.bold, fontSize: 16)),
-                          subtitle: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text('Total: ${stock.quantityTotal}'),
-                              Text('Remaining: ${stock.quantityRemaining}',
-                                  style: TextStyle(
-                                    color: isLowStock
-                                        ? Colors.redAccent
-                                        : Colors.black87,
-                                  )),
-                              Text('Price per Unit: R${stock.pricePerUnit}'),
-                            ],
-                          ),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              IconButton(
-                                icon: const Icon(Icons.edit, color: Colors.blue),
-                                onPressed: () =>
-                                    _addOrEditStock(stock: stock),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.delete, color: Colors.red),
-                                onPressed: () =>
-                                    _deleteStock(stock.id!),
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
+                    itemCount: _visibleStock.length,
+                    itemBuilder: (context, i) => _buildStockCard(_visibleStock[i]),
                   ),
           ),
         ],
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: () => _addOrEditStock(),
         backgroundColor: Colors.blue,
+        onPressed: () => _showStockDialog(),
         child: const Icon(Icons.add, color: Colors.white),
       ),
     );

@@ -3,9 +3,9 @@ class OrderModel {
   final int customerId;
   final int stockId;
   final int quantity;
-  final double price;
-  final double total;
-  final String date;
+  final double price;      // Add this
+  final double total;      // Add this
+  final String date;       // Add this
   final bool paid;
   final bool delivered;
 
@@ -41,11 +41,11 @@ class OrderModel {
       customerId: map['customer_id'],
       stockId: map['stock_id'],
       quantity: map['quantity'],
-      price: map['price']?.toDouble(),
-      total: map['total']?.toDouble(),
-      date: map['date'],
-      paid: map['paid'] == 1,
-      delivered: map['delivered'] == 1,
+      price: (map['price'] ?? 0).toDouble(),
+      total: (map['total'] ?? 0).toDouble(),
+      date: map['date'] ?? '',
+      paid: (map['paid'] ?? 0) == 1,
+      delivered: (map['delivered'] ?? 0) == 1,
     );
   }
 }

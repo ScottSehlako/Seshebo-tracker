@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../db/db_helper.dart';
 import '../models/customer.dart';
 import '../models/order.dart';
+import '../models/stock.dart';
 
 class CustomerDetailsScreen extends StatefulWidget {
   final Customer customer;
@@ -14,6 +15,7 @@ class CustomerDetailsScreen extends StatefulWidget {
 class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
   final DBHelper _dbHelper = DBHelper();
   List<OrderModel> _orders = [];
+  List<StockModel> _stockItems = [];
 
   @override
   void initState() {
@@ -23,75 +25,18 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
 
   Future<void> _loadCustomerOrders() async {
     final db = await _dbHelper.database;
-    final result = await db.query(
+    final orderResult = await db.query(
       'orders',
       where: 'customer_id = ?',
       whereArgs: [widget.customer.id],
       orderBy: 'date DESC',
     );
+    final stockResult = await db.query('stock');
+
     setState(() {
-      _orders = result.map((e) => OrderModel.fromMap(e)).toList();
+      _orders = orderResult.map((e) => OrderModel.fromMap(e)).toList();
+      _stockItems = stockResult.map((e) => StockModel.fromMap(e)).toList();
     });
-  }
-
-  Future<void> _addOrder() async {
-    final qtyController = TextEditingController();
-    final priceController = TextEditingController();
-    final stockIdController = TextEditingController();
-
-    await showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Add Order'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: stockIdController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Stock ID'),
-            ),
-            TextField(
-              controller: qtyController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Quantity'),
-            ),
-            TextField(
-              controller: priceController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Price per Unit'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final quantity = int.tryParse(qtyController.text) ?? 0;
-              final price = double.tryParse(priceController.text) ?? 0.0;
-              final total = quantity * price;
-
-              final order = OrderModel(
-                customerId: widget.customer.id!,
-                stockId: int.tryParse(stockIdController.text) ?? 0,
-                quantity: quantity,
-                price: price,
-                total: total,
-                date: DateTime.now().toIso8601String(),
-              );
-
-              await _dbHelper.insert('orders', order.toMap());
-              Navigator.pop(context);
-              _loadCustomerOrders();
-            },
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
   }
 
   Future<void> _deleteOrder(int id) async {
@@ -110,12 +55,12 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
       ),
       body: Column(
         children: [
-          // Customer info card
           Card(
             color: Colors.grey[100],
             margin: const EdgeInsets.all(10),
             child: ListTile(
-              title: Text(c.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+              title:
+                  Text(c.name, style: const TextStyle(fontWeight: FontWeight.bold)),
               subtitle: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -125,8 +70,6 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
               ),
             ),
           ),
-
-          // Orders section
           Expanded(
             child: _orders.isEmpty
                 ? const Center(child: Text('No orders yet'))
@@ -134,12 +77,20 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
                     itemCount: _orders.length,
                     itemBuilder: (context, index) {
                       final order = _orders[index];
+                      final stock = _stockItems.firstWhere(
+                        (s) => s.id == order.stockId,
+                        orElse: () => StockModel(
+                          type: 'Unknown',
+                          quantityTotal: 0,
+                          quantityRemaining: 0,
+                          pricePerUnit: 0.0,
+                        ),
+                      );
                       return Card(
-                        color: Colors.white,
                         margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                         elevation: 2,
                         child: ListTile(
-                          title: Text('Order #${order.id ?? '-'}'),
+                          title: Text('${stock.type}'),
                           subtitle: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -150,7 +101,7 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
                           ),
                           trailing: IconButton(
                             icon: const Icon(Icons.delete, color: Colors.redAccent),
-                            onPressed: () async => _deleteOrder(order.id!),
+                            onPressed: () => _deleteOrder(order.id!),
                           ),
                         ),
                       );
@@ -158,11 +109,6 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
                   ),
           ),
         ],
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _addOrder,
-        backgroundColor: Colors.blue,
-        child: const Icon(Icons.add, color: Colors.white),
       ),
     );
   }
