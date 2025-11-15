@@ -48,7 +48,7 @@ class _StockScreenState extends State<StockScreen> {
     setState(() {
       _visibleStock = _allStock.where((item) {
         final matchesSearch = item.type.toLowerCase().contains(query);
-        final isLow = item.quantityRemaining <= 5;
+        final isLow = item.quantityRemaining <= item.lowStockThreshold;
 
         if (_filterType == 'Low Stock') {
           return matchesSearch && isLow;
@@ -69,6 +69,8 @@ class _StockScreenState extends State<StockScreen> {
         text: existing?.quantityRemaining.toString() ?? '');
     final priceCtrl =
         TextEditingController(text: existing?.pricePerUnit.toString() ?? '');
+    final thresholdCtrl = TextEditingController(
+        text: existing?.lowStockThreshold.toString() ?? '5');
 
     await showDialog(
       context: context,
@@ -76,11 +78,17 @@ class _StockScreenState extends State<StockScreen> {
         title: Text(isEditing ? 'Edit Stock Item' : 'Add Stock Item'),
         content: SingleChildScrollView(
           child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              _buildTextField('Type', typeCtrl),
+              _buildTextField('Meat Type', typeCtrl),
+              const SizedBox(height: 10),
               _buildTextField('Total Quantity', totalCtrl, isNumber: true),
+              const SizedBox(height: 10),
               _buildTextField('Remaining Quantity', remainCtrl, isNumber: true),
+              const SizedBox(height: 10),
               _buildTextField('Price per Unit (R)', priceCtrl, isNumber: true),
+              const SizedBox(height: 10),
+              _buildTextField('Low Stock Threshold', thresholdCtrl, isNumber: true),
             ],
           ),
         ),
@@ -97,6 +105,20 @@ class _StockScreenState extends State<StockScreen> {
               final total = int.tryParse(totalCtrl.text) ?? 0;
               final remain = int.tryParse(remainCtrl.text) ?? 0;
               final price = double.tryParse(priceCtrl.text) ?? 0.0;
+              final threshold = int.tryParse(thresholdCtrl.text) ?? 5;
+
+              // Validate that remaining doesn't exceed total
+              if (remain > total) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Remaining quantity cannot exceed total quantity'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+                return;
+              }
 
               final stock = StockModel(
                 id: existing?.id,
@@ -104,6 +126,7 @@ class _StockScreenState extends State<StockScreen> {
                 quantityTotal: total,
                 quantityRemaining: remain,
                 pricePerUnit: price,
+                lowStockThreshold: threshold,
               );
 
               if (isEditing) {
@@ -147,15 +170,13 @@ class _StockScreenState extends State<StockScreen> {
 
   Widget _buildTextField(String label, TextEditingController controller,
       {bool isNumber = false}) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: TextField(
-        controller: controller,
-        keyboardType: isNumber ? TextInputType.number : TextInputType.text,
-        decoration: InputDecoration(
-          labelText: label,
-          border: const OutlineInputBorder(),
-        ),
+    return TextField(
+      controller: controller,
+      keyboardType: isNumber ? TextInputType.number : TextInputType.text,
+      decoration: InputDecoration(
+        labelText: label,
+        border: const OutlineInputBorder(),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       ),
     );
   }
@@ -201,7 +222,7 @@ class _StockScreenState extends State<StockScreen> {
   }
 
   Widget _buildStockCard(StockModel stock) {
-    final isLow = stock.quantityRemaining <= 5;
+    final isLow = stock.quantityRemaining <= stock.lowStockThreshold;
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
@@ -217,9 +238,21 @@ class _StockScreenState extends State<StockScreen> {
             Text('Total: ${stock.quantityTotal}'),
             Text(
               'Remaining: ${stock.quantityRemaining}',
-              style: TextStyle(color: isLow ? Colors.red : Colors.black),
+              style: TextStyle(
+                color: isLow ? Colors.red : Colors.black,
+                fontWeight: isLow ? FontWeight.bold : FontWeight.normal,
+              ),
             ),
-            Text('Price per Unit: R${stock.pricePerUnit.toStringAsFixed(2)}'),
+            Text('Price: R${stock.pricePerUnit.toStringAsFixed(2)}/unit'),
+            if (isLow)
+              Text(
+                'LOW STOCK! (Threshold: ${stock.lowStockThreshold})',
+                style: const TextStyle(
+                  color: Colors.red,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
+                ),
+              ),
           ],
         ),
         trailing: Row(
